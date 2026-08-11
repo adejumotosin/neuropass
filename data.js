@@ -127,6 +127,62 @@ window.NeuroPassData = (() => {
     reduceMotion:false
   };
 
+  const makeFreshState = () => ({
+    version:1,
+    authenticated:false,
+    onboardingComplete:false,
+    currentRole:'student',
+    user:{
+      id:null, authUserId:null, name:'Student', firstName:'Student', age:null, location:null, email:'',
+      examType:'JAMB', examDate:null, subjects:['english','mathematics','biology','chemistry'],
+      baselineScore:0, selectedTrackId:'rise', trackStart:null, currentDay:1,
+      consistencyRisk:false, schoolDays:[], preferredTimes:[],
+      xp:0, level:1, streakDisplay:0, accountabilityOptIn:false,
+      settings:{...defaultSettings}
+    },
+    compliance:{
+      rollingAverage:100,
+      weekly:[],
+      consecutiveBelow70:0,
+      status:'active',
+      events:[]
+    },
+    score:{ projected:100, guaranteed:100, confidence:'low', modelVersion:'heuristic-v1.0', updatedAt:null },
+    today:{
+      emotionalState:null,
+      mode:'standard',
+      microGoal:'Complete your first short NeuroPass session.',
+      sessions:[
+        {id:'day1_activation',time:'08:00',title:'Day 1 Activation',meta:'Set your goal and warm up',duration:10,status:'next',subjectId:null},
+        {id:'day1_study',time:'16:00',title:'Session 1',meta:'Start with your first selected subject',duration:30,status:'later',subjectId:'english',lessonId:'lesson_concord'},
+        {id:'day1_review',time:'19:00',title:'Quick Recall',meta:'5-question recall check',duration:10,status:'later',subjectId:null}
+      ]
+    },
+    sessionsCompleted:0,
+    minutesStudied:0,
+    reviewsCompleted:0,
+    spacedQueue:[],
+    mistakeBank:[],
+    answers:[],
+    mockHistory:[],
+    riskSignals:[],
+    coach:{
+      assigned:{id:null,name:'Not assigned yet',role:'Learning Coach',qualification:''},
+      messages:[],
+      touchpoints:[]
+    },
+    guaranteeCase:null,
+    postExamOutcomes:[],
+    admin:{legalReviewComplete:false,coachesStaffed:false,checks:{},importJobs:[],audit:[],predictiveRules:[]},
+    cfaWaitlist:[],
+    importedQuestions:[],
+    checkInHistory:[],
+    waitlist:[],
+    demoMode:false,
+    restDaysUsed:0,
+    offline:{downloadedPacks:[],pendingSync:0,lastSync:null,queue:[]}
+  });
+
   const makeDemoState = () => ({
     version:1,
     authenticated:false,
@@ -223,5 +279,5 @@ window.NeuroPassData = (() => {
     offline:{downloadedPacks:['english','mathematics'],pendingSync:0,lastSync:'2026-08-11T11:50:00Z'}
   });
 
-  return { tracks, subjects, topics, lessons, questions, defaultSettings, makeDemoState };
+  return { tracks, subjects, topics, lessons, questions, defaultSettings, makeFreshState, makeDemoState };
 })();

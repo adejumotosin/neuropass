@@ -8,8 +8,8 @@ window.NPStore = (() => {
   const listeners=new Set();
 
   function load(){
-    try { state=JSON.parse(localStorage.getItem(KEY)) || window.NeuroPassData.makeDemoState(); }
-    catch { state=window.NeuroPassData.makeDemoState(); }
+    try { state=JSON.parse(localStorage.getItem(KEY)) || window.NeuroPassData.makeFreshState(); }
+    catch { state=window.NeuroPassData.makeFreshState(); }
     if (!state.checkInHistory) state.checkInHistory=[];
     if (!state.waitlist) state.waitlist=[];
     if (state.demoMode === undefined) state.demoMode=false;
@@ -24,7 +24,8 @@ window.NPStore = (() => {
   function get(){ return state || load(); }
   function set(next){ state=next; return save(); }
   function patch(fn){ const next=clone(get()); fn(next); state=next; return save(); }
-  function reset(){ state=window.NeuroPassData.makeDemoState(); state.demoMode=false; return save(); }
+  function reset(){ state=window.NeuroPassData.makeFreshState(); return save(); }
+  function resetDemo(){ state=window.NeuroPassData.makeDemoState(); state.demoMode=true; return save(); }
   function subscribe(fn){ listeners.add(fn); return ()=>listeners.delete(fn); }
 
   function queueOffline(action){
@@ -64,11 +65,21 @@ window.NPStore = (() => {
     if(error) throw error;
     if(preferRemote && data?.state && Object.keys(data.state).length){
       applyingRemote=true;
-      state={...window.NeuroPassData.makeDemoState(),...data.state,authenticated:true,demoMode:false};
+      state={...window.NeuroPassData.makeFreshState(),...data.state,authenticated:true,demoMode:false};
       localStorage.setItem(KEY,JSON.stringify(state));
       applyingRemote=false;
       listeners.forEach(fn=>fn(state));
     } else {
+      const local=get();
+      if(local?.user?.authUserId && local.user.authUserId !== userId){
+        state=window.NeuroPassData.makeFreshState();
+      }
+      state.user=state.user||{};
+      state.user.authUserId=userId;
+      state.user.id=userId;
+      state.authenticated=true;
+      state.demoMode=false;
+      localStorage.setItem(KEY,JSON.stringify(state));
       await syncNow();
     }
     return state;
@@ -93,5 +104,5 @@ window.NPStore = (() => {
 
   load();
   window.addEventListener('online',()=>flushQueue().catch(console.error));
-  return {get,set,patch,reset,subscribe,queueOffline,flushQueue,savePack,getPack,attachRemoteUser,detachRemoteUser,syncNow};
+  return {get,set,patch,reset,resetDemo,subscribe,queueOffline,flushQueue,savePack,getPack,attachRemoteUser,detachRemoteUser,syncNow};
 })();
