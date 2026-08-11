@@ -1,0 +1,71 @@
+name: Fix unassigned coach UI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-coach-assignment-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch coach UI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app.js')
+          text = p.read_text()
+
+          old_home = "<div class=\"grid two\" style=\"margin-top:18px\"><div class=\"card\"><h3>Coach support</h3><p>${s.coach.assigned.name} is your named Learning Coach. ${s.riskSignals.some(x=>x.active)?'A support signal is active.':'No urgent support signal is active.'}</p><a href=\"#coach\" class=\"btn secondary small\" style=\"margin-top:14px\">Open coach</a></div><div class=\"card\"><h3>Offline packs</h3>"
+          new_home = "<div class=\"grid two\" style=\"margin-top:18px\"><div class=\"card\"><h3>Coach support</h3><p>${s.coach.assigned?.id ? esc(s.coach.assigned.name)+' is your named Learning Coach.' : 'A Learning Coach has not been assigned yet.'} ${s.riskSignals.some(x=>x.active)?'A support signal is active.':'No urgent support signal is active.'}</p><a href=\"#coach\" class=\"btn secondary small\" style=\"margin-top:14px\">Open coach</a></div><div class=\"card\"><h3>Offline packs</h3>"
+          if old_home not in text:
+              raise SystemExit('Home coach support snippet not found')
+          text = text.replace(old_home, new_home, 1)
+
+          start = text.index('  function coachPage(){')
+          end = text.index('\n\n  function parentShare(){', start)
+          new_coach = '''  function coachPage(){
+    const s=Store.get(), assigned=!!s.coach.assigned?.id;
+    const assignmentStatus=assigned?status('Assigned coach','success'):status('Awaiting assignment','neutral');
+    const messageArea=assigned
+      ? `<form id="coachMessage" class="action-strip" style="margin-top:16px"><input name="msg" aria-label="Message" placeholder="Write a message" style="flex:1;min-width:180px;border:1px solid var(--line);border-radius:12px;padding:10px" required><button class="btn primary">Send</button></form>${!navigator.onLine?'<p style="margin-top:8px">Message will be queued until you reconnect.</p>':''}`
+      : `<div class="callout info" style="margin-top:16px"><strong>Coach assignment pending</strong><p>Messaging will become available after a Learning Coach is assigned to your account.</p></div>`;
+    return `<div class="page"><div class="page-head"><div><span class="eyebrow">Human touchpoint</span><h1>${assigned?esc(s.coach.assigned.name):'Not assigned yet'}</h1><p>${assigned?'Your Learning Coach can help with consistency, a failed mock or a recovery plan.':'A Learning Coach has not been assigned to your account yet. NeuroPass will show the coach here when assignment is complete.'} This is not peer mentoring.</p></div>${assignmentStatus}</div><div class="card"><div class="session-list">${s.coach.messages.map(m=>`<div class="callout ${m.from==='coach'?'info':''}"><strong>${m.from==='coach'?(assigned?esc(s.coach.assigned.name):'Learning Coach'):'You'}</strong><p>${esc(m.text)}</p><small>${new Date(m.date).toLocaleString()}</small></div>`).join('')}</div>${messageArea}</div><div class="section-title"><h2>Touchpoints</h2><p>Scheduled around real risk moments</p></div><div class="grid two">${s.coach.touchpoints.map(t=>`<div class="card flat"><div class="progress-row"><strong>${esc(t.moment)}</strong>${status(t.status,t.status==='completed'?'success':'info')}</div><p>${fmtDate(t.date)} · ${esc(t.notes)}</p></div>`).join('')}</div></div>`;
+  }
+  function bindCoach(){
+    $('#coachMessage')?.addEventListener('submit',e=>{
+      e.preventDefault();
+      const s=Store.get();
+      if(!s.coach.assigned?.id) return toast('A Learning Coach has not been assigned yet.');
+      const text=new FormData(e.target).get('msg').trim();
+      if(!text)return;
+      Store.patch(st=>{st.coach.messages.push({id:`m_${Date.now()}`,from:'student',date:new Date().toISOString(),text});if(!navigator.onLine)st.offline.pendingSync++;});
+      render();
+      toast(navigator.onLine?'Message sent.':'Message queued for sync.');
+    });
+  }'''
+          text = text[:start] + new_coach + text[end:]
+          p.write_text(text)
+          PY
+
+      - name: Validate JavaScript
+        run: node --check app.js
+
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "Fix coach assignment status for new students"
+          git push
