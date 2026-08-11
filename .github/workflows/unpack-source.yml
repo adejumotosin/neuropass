@@ -1,0 +1,36 @@
+name: Unpack NeuroPass V1 source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.source-parts/**'
+      - '.github/workflows/unpack-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild source archive
+        run: |
+          cat .source-parts/part-*.b64 | tr -d '\n\r' | base64 -d > /tmp/NeuroPass_V1_Full.zip
+          unzip -t /tmp/NeuroPass_V1_Full.zip
+          unzip -o /tmp/NeuroPass_V1_Full.zip -d .
+
+      - name: Commit unpacked source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "Unpack full NeuroPass V1 source"
+          git push
