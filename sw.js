@@ -1,6 +1,6 @@
-const CACHE = 'neuropass-v1.0.0';
+const CACHE = 'neuropass-v1.1.0';
 const APP_SHELL = [
-  '/', '/index.html', '/styles.css', '/data.js', '/engine.js', '/storage.js', '/app.js',
+  '/', '/index.html', '/styles.css', '/supabase-client.js', '/data.js', '/engine.js', '/storage.js', '/app.js',
   '/manifest.webmanifest', '/assets/icon.svg', '/data/sample_questions.json'
 ];
 

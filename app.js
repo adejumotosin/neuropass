@@ -30,42 +30,108 @@
     if(s.background && s.background!=='standard') document.body.classList.add(`theme-${s.background}`);
   }
 
+  async function loadAuthenticatedUser(user){
+    if(!user) return false;
+    try{
+      const {data:profile,error}=await window.NPSupabase.from('profiles').select('role,full_name').eq('id',user.id).single();
+      if(error) throw error;
+      await Store.attachRemoteUser(user.id,{preferRemote:true});
+      const roleMap={student:'student',learning_coach:'coach',senior_coach:'senior',admin:'admin'};
+      Store.patch(s=>{
+        s.authenticated=true;
+        s.demoMode=false;
+        s.user.email=user.email||s.user.email;
+        s.user.name=profile?.full_name||s.user.name;
+        s.user.firstName=(profile?.full_name||s.user.firstName||'Student').split(' ')[0];
+        s.currentRole=roleMap[profile?.role]||'student';
+      });
+      return true;
+    }catch(err){
+      console.error(err);
+      toast('Your account was found, but profile loading failed. Please try again.');
+      return false;
+    }
+  }
+
   function authView(){
     cleanupTransient();
     $('#app').innerHTML=`<div class="auth-wrap">
       <section class="auth-visual"><div class="brand"><img src="/assets/icon.svg" alt=""><div>NeuroPass<small style="color:rgba(255,255,255,.75)">Exam preparation for minds that work differently</small></div></div>
       <div><h1>Study in a way your brain can actually use.</h1><p>JAMB and WAEC preparation with shorter learning loops, audio support, recovery days, spaced repetition and a plan that adapts to how you are doing.</p></div><small>Demo question data is illustrative. Licensed exam content can be imported by an administrator.</small></section>
       <section class="auth-panel"><div class="auth-box"><span class="eyebrow">Student access</span><h2>Welcome to NeuroPass</h2><p>No diagnosis is required. Choose what helps you learn.</p>
-      <form id="loginForm" class="grid" style="gap:14px"><div class="field"><label>Email</label><input required type="email" name="email" value="tolu.demo@neuropass.local"></div><div class="field"><label>Password</label><input required type="password" name="password" value="demopass"></div><button class="btn primary">Sign in</button></form>
-      <div class="section-title"><p>or</p></div><button id="demoBtn" class="btn secondary" style="width:100%">Open interactive demo</button><button id="onboardBtn" class="btn ghost" style="width:100%;margin-top:8px">Create a student profile</button>
+      <form id="loginForm" class="grid" style="gap:14px"><div class="field"><label>Email</label><input required type="email" name="email" autocomplete="email" placeholder="you@example.com"></div><div class="field"><label>Password</label><input required type="password" name="password" autocomplete="current-password" minlength="8"></div><button class="btn primary">Sign in</button></form>
+      <div class="section-title"><p>or</p></div><button id="demoBtn" class="btn secondary" style="width:100%">Open interactive demo</button><button id="onboardBtn" class="btn ghost" style="width:100%;margin-top:8px">Create a student account</button>
       <div class="callout info" style="margin-top:18px"><strong>Private beta build</strong><p>Guarantee language remains subject to legal approval before public launch.</p></div></div></section></div>`;
-    $('#loginForm').onsubmit=e=>{e.preventDefault(); Store.patch(s=>{s.authenticated=true;s.user.email=new FormData(e.target).get('email');}); go('home'); render();};
-    $('#demoBtn').onclick=()=>{Store.patch(s=>s.authenticated=true);go('home');render();};
+    $('#loginForm').onsubmit=async e=>{
+      e.preventDefault();
+      if(!window.NPSupabase) return toast('Cloud sign-in is temporarily unavailable.');
+      const fd=new FormData(e.target), email=String(fd.get('email')).trim(), password=String(fd.get('password'));
+      const btn=e.submitter; if(btn){btn.disabled=true;btn.textContent='Signing in...';}
+      const {data,error}=await window.NPSupabase.auth.signInWithPassword({email,password});
+      if(btn){btn.disabled=false;btn.textContent='Sign in';}
+      if(error) return toast(error.message);
+      if(await loadAuthenticatedUser(data.user)){go('home');render();}
+    };
+    $('#demoBtn').onclick=()=>{Store.reset();Store.patch(s=>{s.authenticated=true;s.demoMode=true;s.currentRole='student';});go('home');render();};
     $('#onboardBtn').onclick=()=>onboarding();
   }
 
   function onboarding(){
-    let step=0, draft={examType:'JAMB',subjects:['english','mathematics','biology','chemistry'],track:'elite',focus:false,reading:false,audio:true,examDate:'2026-11-15'};
+    let step=0, draft={name:'',email:'',password:'',examType:'JAMB',subjects:['english','mathematics','biology','chemistry'],track:'elite',focus:false,reading:false,audio:true,examDate:'2026-11-15'};
     const renderStep=()=>{
       const steps=[
+        `<h2>Create your account</h2><p>Your progress will sync securely across devices while downloaded study packs remain available offline.</p><div class="grid" style="gap:14px;margin-top:18px"><div class="field"><label>Full name</label><input id="signupName" autocomplete="name" value="${esc(draft.name)}" placeholder="Your full name"></div><div class="field"><label>Email</label><input id="signupEmail" type="email" autocomplete="email" value="${esc(draft.email)}" placeholder="you@example.com"></div><div class="field"><label>Password</label><input id="signupPassword" type="password" autocomplete="new-password" minlength="8" value="${esc(draft.password)}" placeholder="At least 8 characters"></div></div>`,
         `<h2>What are you preparing for?</h2><p>Choose your exam. You can change subjects later.</p><div class="choice-grid" style="grid-template-columns:repeat(2,1fr);margin-top:18px"><button class="choice ${draft.examType==='JAMB'?'selected':''}" data-exam="JAMB">JAMB</button><button class="choice ${draft.examType==='WAEC'?'selected':''}" data-exam="WAEC">WAEC</button></div><div class="field" style="margin-top:16px"><label>Target exam date</label><input id="examDate" type="date" value="${draft.examDate}"></div>`,
         `<h2>Select your subjects</h2><p>For this build, the demo includes the six seeded core subjects.</p><div class="grid two" style="margin-top:16px">${D.subjects.map(x=>`<label class="check-row card flat"><input type="checkbox" data-subject="${x.id}" ${draft.subjects.includes(x.id)?'checked':''}> <strong>${x.icon} ${esc(x.name)}</strong></label>`).join('')}</div>`,
         `<h2>What usually gets in the way?</h2><p>This is not a diagnosis. It only helps NeuroPass suggest settings.</p><div class="grid" style="margin-top:16px"><label class="check-row card flat"><input id="focusBox" type="checkbox" ${draft.focus?'checked':''}><div><strong>Staying focused is difficult</strong><p>I start, drift, or abandon long study sessions.</p></div></label><label class="check-row card flat"><input id="readingBox" type="checkbox" ${draft.reading?'checked':''}><div><strong>Reading can be tiring or frustrating</strong><p>I re-read lines, lose my place, or prefer listening.</p></div></label><label class="check-row card flat"><input id="audioBox" type="checkbox" ${draft.audio?'checked':''}><div><strong>Audio helps me learn</strong><p>Suggest read-aloud support.</p></div></label></div>`,
         `<h2>Choose a commitment track</h2><p>The advertised track is not your live guarantee. Your actual guarantee changes with completed work and spaced repetition.</p><div class="track-grid" style="margin-top:16px">${D.tracks.map(t=>`<button class="track-card ${draft.track===t.id?'selected':''}" data-track="${t.id}" style="text-align:left"><div class="track-name">${t.name}</div><div class="track-score">${t.guaranteed}/400</div><small>${t.days} days, ${t.hours} hrs/day, realistic target ${t.target}</small></button>`).join('')}</div>`,
         `<h2>Your suggested setup</h2><p>Based on your answers, we have suggested these settings. Everything can be changed at any time in Settings. You decide what works for you.</p><div class="grid two" style="margin-top:16px"><div class="card flat"><strong>Focus support</strong><p>${draft.focus?'Visible timer, recovery missions and Low Energy Mode suggested.':'Standard focus settings suggested.'}</p></div><div class="card flat"><strong>Reading support</strong><p>${draft.reading?'Dyslexia-friendly font option, chunked passages and audio suggested.':'Standard typography with optional audio.'}</p></div></div><label class="check-row callout warning" style="margin-top:16px"><input id="contractAck" type="checkbox"><div><strong>Shared commitment</strong><p>I understand that guarantee eligibility depends on assigned sessions, mocks, schedule adherence and at least 80% average compliance. No track guarantees 400/400.</p></div></label>`
       ];
-      $('#app').innerHTML=`<div class="auth-wrap"><section class="auth-visual"><div class="brand"><img src="/assets/icon.svg" alt=""><div>NeuroPass</div></div><div><h1 style="font-size:3.2rem">Build a plan around you.</h1><p>Short, adjustable and recoverable. No label required.</p></div><small>Step ${step+1} of ${steps.length}</small></section><section class="auth-panel"><div class="auth-box" style="width:min(680px,100%)"><div class="onboard-stepper">${steps.map((_,i)=>`<span class="${i<step?'done':i===step?'active':''}"></span>`).join('')}</div>${steps[step]}<div class="modal-actions"><button id="backStep" class="btn secondary" ${step===0?'disabled':''}>Back</button><button id="nextStep" class="btn primary">${step===steps.length-1?'Start NeuroPass':'Continue'}</button></div></div></section></div>`;
+      $('#app').innerHTML=`<div class="auth-wrap"><section class="auth-visual"><div class="brand"><img src="/assets/icon.svg" alt=""><div>NeuroPass</div></div><div><h1 style="font-size:3.2rem">Build a plan around you.</h1><p>Short, adjustable and recoverable. No label required.</p></div><small>Step ${step+1} of ${steps.length}</small></section><section class="auth-panel"><div class="auth-box" style="width:min(680px,100%)"><div class="onboard-stepper">${steps.map((_,i)=>`<span class="${i<step?'done':i===step?'active':''}"></span>`).join('')}</div>${steps[step]}<div class="modal-actions"><button id="backStep" class="btn secondary" ${step===0?'disabled':''}>Back</button><button id="nextStep" class="btn primary">${step===steps.length-1?'Create account':'Continue'}</button></div></div></section></div>`;
       $$('[data-exam]').forEach(b=>b.onclick=()=>{draft.examType=b.dataset.exam;renderStep();});
       $$('[data-track]').forEach(b=>b.onclick=()=>{draft.track=b.dataset.track;renderStep();});
       $$('[data-subject]').forEach(b=>b.onchange=()=>{draft.subjects=$$('[data-subject]:checked').map(x=>x.dataset.subject);});
+      $('#signupName')?.addEventListener('input',e=>draft.name=e.target.value);
+      $('#signupEmail')?.addEventListener('input',e=>draft.email=e.target.value);
+      $('#signupPassword')?.addEventListener('input',e=>draft.password=e.target.value);
       $('#examDate')?.addEventListener('change',e=>draft.examDate=e.target.value);
       $('#focusBox')?.addEventListener('change',e=>draft.focus=e.target.checked);
       $('#readingBox')?.addEventListener('change',e=>draft.reading=e.target.checked);
       $('#audioBox')?.addEventListener('change',e=>draft.audio=e.target.checked);
       $('#backStep').onclick=()=>{if(step>0){step--;renderStep();}};
-      $('#nextStep').onclick=()=>{
-        if(step===steps.length-1){ if(!$('#contractAck').checked) return toast('Please acknowledge the shared commitment first.'); Store.patch(s=>{s.authenticated=true;s.onboardingComplete=true;s.user.examType=draft.examType;s.user.examDate=draft.examDate;s.user.subjects=draft.subjects;s.user.selectedTrackId=draft.track;s.user.settings.dyslexicFont=draft.reading;s.user.settings.chunkedReading=draft.reading;s.user.settings.readAloud=draft.audio;s.user.consistencyRisk=draft.focus;}); applySettings();go('home');render(); }
-        else {step++;renderStep();}
+      $('#nextStep').onclick=async()=>{
+        if(step===0){
+          if(!draft.name.trim()) return toast('Enter your full name.');
+          if(!/^\S+@\S+\.\S+$/.test(draft.email)) return toast('Enter a valid email address.');
+          if(draft.password.length<8) return toast('Use a password with at least 8 characters.');
+        }
+        if(step===2 && draft.subjects.length===0) return toast('Choose at least one subject.');
+        if(step===steps.length-1){
+          if(!$('#contractAck').checked) return toast('Please acknowledge the shared commitment first.');
+          if(!window.NPSupabase) return toast('Cloud account creation is temporarily unavailable.');
+          const btn=$('#nextStep');btn.disabled=true;btn.textContent='Creating account...';
+          const {data,error}=await window.NPSupabase.auth.signUp({email:draft.email,password:draft.password,options:{data:{full_name:draft.name.trim()}}});
+          if(error){btn.disabled=false;btn.textContent='Create account';return toast(error.message);}
+          if(!data.user){btn.disabled=false;btn.textContent='Create account';return toast('Account creation did not complete. Please try again.');}
+          Store.reset();
+          Store.patch(s=>{s.authenticated=!!data.session;s.demoMode=false;s.onboardingComplete=true;s.user.email=draft.email;s.user.name=draft.name.trim();s.user.firstName=draft.name.trim().split(' ')[0];s.user.examType=draft.examType;s.user.examDate=draft.examDate;s.user.subjects=draft.subjects;s.user.selectedTrackId=draft.track;s.user.settings.dyslexicFont=draft.reading;s.user.settings.chunkedReading=draft.reading;s.user.settings.readAloud=draft.audio;s.user.consistencyRisk=draft.focus;});
+          if(data.session){
+            await Store.attachRemoteUser(data.user.id,{preferRemote:false});
+            const settings=Store.get().user.settings;
+            await Promise.all([
+              window.NPSupabase.from('student_profiles').upsert({user_id:data.user.id,exam_type:draft.examType,exam_date:draft.examDate||null,baseline_score:Store.get().user.baselineScore,track_id:draft.track,track_start:new Date().toISOString().slice(0,10),consistency_risk:draft.focus}),
+              window.NPSupabase.from('accommodation_settings').upsert({user_id:data.user.id,dyslexic_font:!!settings.dyslexicFont,read_aloud:!!settings.readAloud,chunked_reading:!!settings.chunkedReading}),
+              ...draft.subjects.map(subject_id=>window.NPSupabase.from('student_subjects').upsert({student_id:data.user.id,subject_id},{onConflict:'student_id,subject_id'}))
+            ]);
+            await Store.syncNow();
+            applySettings();go('home');render();
+          } else {
+            toast('Account created. Check your email to confirm your address, then sign in.');
+            setTimeout(authView,1000);
+          }
+          return;
+        }
+        step++;renderStep();
       };
     };
     renderStep();
@@ -75,14 +141,16 @@
     const st=Store.get(), role=st.currentRole;
     const nav=role==='admin'?navAdmin:role==='student'?navStudent:navCoach;
     const navHtml=nav.map(([id,ic,label])=>`<a class="nav-link ${r===id?'active':''}" href="#${id}"><span class="nav-icon">${ic}</span>${label}</a>`).join('');
-    return `<header class="topbar"><a href="#${role==='admin'?'admin':role==='student'?'home':'coach-dashboard'}" class="brand"><img src="/assets/icon.svg" alt=""><div>NeuroPass<small>Exam preparation for minds that work differently</small></div></a><div class="top-actions"><select id="roleSwitch" class="role-pill" aria-label="Demo role">${Object.entries(roleNames).map(([k,v])=>`<option value="${k}" ${k===role?'selected':''}>Demo: ${v}</option>`).join('')}</select><button id="syncBtn" class="btn ghost small" title="Sync offline queue">${navigator.onLine?'Synced':'Offline'} ${st.offline.pendingSync?`(${st.offline.pendingSync})`:''}</button><div class="avatar">${esc((role==='student'?st.user.firstName:role==='admin'?'A':'C').slice(0,1))}</div></div></header>
+    const roleControl=st.demoMode?`<select id="roleSwitch" class="role-pill" aria-label="Demo role">${Object.entries(roleNames).map(([k,v])=>`<option value="${k}" ${k===role?'selected':''}>Demo: ${v}</option>`).join('')}</select>`:`<span class="role-pill">${esc(roleNames[role]||'Student')}</span>`;
+    return `<header class="topbar"><a href="#${role==='admin'?'admin':role==='student'?'home':'coach-dashboard'}" class="brand"><img src="/assets/icon.svg" alt=""><div>NeuroPass<small>Exam preparation for minds that work differently</small></div></a><div class="top-actions">${roleControl}<button id="syncBtn" class="btn ghost small" title="Sync offline queue">${navigator.onLine?'Synced':'Offline'} ${st.offline.pendingSync?`(${st.offline.pendingSync})`:''}</button>${!st.demoMode?'<button id="signOutBtn" class="btn ghost small">Sign out</button>':''}<div class="avatar">${esc((role==='student'?st.user.firstName:role==='admin'?'A':'C').slice(0,1))}</div></div></header>
     <div class="layout"><aside class="sidebar"><nav class="nav-group">${navHtml}<div class="sidebar-foot"><strong>Private V1 build</strong><br>Question content is demo data until licensed source material is imported.</div></nav></aside><main class="main">${content}</main></div>
     <nav class="mobile-bottom">${nav.slice(0,4).map(([id,ic,label])=>`<a class="${r===id?'active':''}" href="#${id}"><span class="nav-icon">${ic}</span>${label}</a>`).join('')}<button id="mobileMore"><span class="nav-icon">•••</span>More</button></nav>`;
   }
 
   function bindShell(){
     $('#roleSwitch')?.addEventListener('change',e=>{Store.patch(s=>s.currentRole=e.target.value);const role=e.target.value;go(role==='admin'?'admin':role==='student'?'home':'coach-dashboard');render();});
-    $('#syncBtn')?.addEventListener('click',()=>{if(!navigator.onLine)return toast('Still offline. Progress is safely queued.');Store.flushQueue();toast('Offline queue synced.');render();});
+    $('#syncBtn')?.addEventListener('click',async()=>{if(!navigator.onLine)return toast('Still offline. Progress is safely queued.');try{await Store.flushQueue();toast('Progress synced.');render();}catch(err){console.error(err);toast('Sync failed. Your local progress is still safe.');}});
+    $('#signOutBtn')?.addEventListener('click',async()=>{try{await Store.syncNow();}catch{} await window.NPSupabase?.auth.signOut();Store.detachRemoteUser();Store.reset();go('home');render();});
     $('#mobileMore')?.addEventListener('click',()=>showModal(`<h2>More</h2><div class="grid">${(Store.get().currentRole==='student'?navStudent:Store.get().currentRole==='admin'?navAdmin:navCoach).slice(4).map(([id,ic,l])=>`<a class="btn secondary" href="#${id}" onclick="document.querySelector('.modal-backdrop')?.remove()">${ic} ${l}</a>`).join('')}</div>`));
   }
 
@@ -277,5 +345,24 @@
   function network(){ const b=$('#offlineBanner');if(b)b.classList.toggle('hidden',navigator.onLine);if(navigator.onLine)Store.flushQueue(); }
   window.addEventListener('hashchange',render);window.addEventListener('online',()=>{network();toast('Back online. Pending progress is syncing.');render();});window.addEventListener('offline',()=>{network();toast('Offline mode active. Downloaded study content still works.');render();});
   if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
-  network();recalc();render();
+  async function bootstrap(){
+    network();
+    if(window.NPSupabase){
+      const {data:{session}}=await window.NPSupabase.auth.getSession();
+      if(session?.user){
+        await loadAuthenticatedUser(session.user);
+      } else if(!Store.get().demoMode){
+        Store.patch(s=>{s.authenticated=false;s.currentRole='student';});
+      }
+      window.NPSupabase.auth.onAuthStateChange((event,session)=>{
+        if(event==='SIGNED_OUT'){
+          Store.detachRemoteUser();
+          Store.patch(s=>{s.authenticated=false;s.demoMode=false;s.currentRole='student';});
+          render();
+        }
+      });
+    }
+    recalc();render();
+  }
+  bootstrap();
 })();
