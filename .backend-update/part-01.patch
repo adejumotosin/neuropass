@@ -1,0 +1,66 @@
+lt=""><div>NeuroPass</div></div><div><h1 style="font-size:3.2rem">Build a plan around you.</h1><p>Short, adjustable and recoverable. No label required.</p></div><small>Step ${step+1} of ${steps.length}</small></section><section class="auth-panel"><div class="auth-box" style="width:min(680px,100%)"><div class="onboard-stepper">${steps.map((_,i)=>`<span class="${i<step?'done':i===step?'active':''}"></span>`).join('')}</div>${steps[step]}<div class="modal-actions"><button id="backStep" class="btn secondary" ${step===0?'disabled':''}>Back</button><button id="nextStep" class="btn primary">${step===steps.length-1?'Start NeuroPass':'Continue'}</button></div></div></section></div>`;
++      $('#app').innerHTML=`<div class="auth-wrap"><section class="auth-visual"><div class="brand"><img src="/assets/icon.svg" alt=""><div>NeuroPass</div></div><div><h1 style="font-size:3.2rem">Build a plan around you.</h1><p>Short, adjustable and recoverable. No label required.</p></div><small>Step ${step+1} of ${steps.length}</small></section><section class="auth-panel"><div class="auth-box" style="width:min(680px,100%)"><div class="onboard-stepper">${steps.map((_,i)=>`<span class="${i<step?'done':i===step?'active':''}"></span>`).join('')}</div>${steps[step]}<div class="modal-actions"><button id="backStep" class="btn secondary" ${step===0?'disabled':''}>Back</button><button id="nextStep" class="btn primary">${step===steps.length-1?'Create account':'Continue'}</button></div></div></section></div>`;
+       $$('[data-exam]').forEach(b=>b.onclick=()=>{draft.examType=b.dataset.exam;renderStep();});
+       $$('[data-track]').forEach(b=>b.onclick=()=>{draft.track=b.dataset.track;renderStep();});
+       $$('[data-subject]').forEach(b=>b.onchange=()=>{draft.subjects=$$('[data-subject]:checked').map(x=>x.dataset.subject);});
++      $('#signupName')?.addEventListener('input',e=>draft.name=e.target.value);
++      $('#signupEmail')?.addEventListener('input',e=>draft.email=e.target.value);
++      $('#signupPassword')?.addEventListener('input',e=>draft.password=e.target.value);
+       $('#examDate')?.addEventListener('change',e=>draft.examDate=e.target.value);
+       $('#focusBox')?.addEventListener('change',e=>draft.focus=e.target.checked);
+       $('#readingBox')?.addEventListener('change',e=>draft.reading=e.target.checked);
+       $('#audioBox')?.addEventListener('change',e=>draft.audio=e.target.checked);
+       $('#backStep').onclick=()=>{if(step>0){step--;renderStep();}};
+-      $('#nextStep').onclick=()=>{
+-        if(step===steps.length-1){ if(!$('#contractAck').checked) return toast('Please acknowledge the shared commitment first.'); Store.patch(s=>{s.authenticated=true;s.onboardingComplete=true;s.user.examType=draft.examType;s.user.examDate=draft.examDate;s.user.subjects=draft.subjects;s.user.selectedTrackId=draft.track;s.user.settings.dyslexicFont=draft.reading;s.user.settings.chunkedReading=draft.reading;s.user.settings.readAloud=draft.audio;s.user.consistencyRisk=draft.focus;}); applySettings();go('home');render(); }
+-        else {step++;renderStep();}
++      $('#nextStep').onclick=async()=>{
++        if(step===0){
++          if(!draft.name.trim()) return toast('Enter your full name.');
++          if(!/^\S+@\S+\.\S+$/.test(draft.email)) return toast('Enter a valid email address.');
++          if(draft.password.length<8) return toast('Use a password with at least 8 characters.');
++        }
++        if(step===2 && draft.subjects.length===0) return toast('Choose at least one subject.');
++        if(step===steps.length-1){
++          if(!$('#contractAck').checked) return toast('Please acknowledge the shared commitment first.');
++          if(!window.NPSupabase) return toast('Cloud account creation is temporarily unavailable.');
++          const btn=$('#nextStep');btn.disabled=true;btn.textContent='Creating account...';
++          const {data,error}=await window.NPSupabase.auth.signUp({email:draft.email,password:draft.password,options:{data:{full_name:draft.name.trim()}}});
++          if(error){btn.disabled=false;btn.textContent='Create account';return toast(error.message);}
++          if(!data.user){btn.disabled=false;btn.textContent='Create account';return toast('Account creation did not complete. Please try again.');}
++          Store.reset();
++          Store.patch(s=>{s.authenticated=!!data.session;s.demoMode=false;s.onboardingComplete=true;s.user.email=draft.email;s.user.name=draft.name.trim();s.user.firstName=draft.name.trim().split(' ')[0];s.user.examType=draft.examType;s.user.examDate=draft.examDate;s.user.subjects=draft.subjects;s.user.selectedTrackId=draft.track;s.user.settings.dyslexicFont=draft.reading;s.user.settings.chunkedReading=draft.reading;s.user.settings.readAloud=draft.audio;s.user.consistencyRisk=draft.focus;});
++          if(data.session){
++            await Store.attachRemoteUser(data.user.id,{preferRemote:false});
++            const settings=Store.get().user.settings;
++            await Promise.all([
++              window.NPSupabase.from('student_profiles').upsert({user_id:data.user.id,exam_type:draft.examType,exam_date:draft.examDate||null,baseline_score:Store.get().user.baselineScore,track_id:draft.track,track_start:new Date().toISOString().slice(0,10),consistency_risk:draft.focus}),
++              window.NPSupabase.from('accommodation_settings').upsert({user_id:data.user.id,dyslexic_font:!!settings.dyslexicFont,read_aloud:!!settings.readAloud,chunked_reading:!!settings.chunkedReading}),
++              ...draft.subjects.map(subject_id=>window.NPSupabase.from('student_subjects').upsert({student_id:data.user.id,subject_id},{onConflict:'student_id,subject_id'}))
++            ]);
++            await Store.syncNow();
++            applySettings();go('home');render();
++          } else {
++            toast('Account created. Check your email to confirm your address, then sign in.');
++            setTimeout(authView,1000);
++          }
++          return;
++        }
++        step++;renderStep();
+       };
+     };
+     renderStep();
+@@ -75,14 +141,16 @@
+     const st=Store.get(), role=st.currentRole;
+     const nav=role==='admin'?navAdmin:role==='student'?navStudent:navCoach;
+     const navHtml=nav.map(([id,ic,label])=>`<a class="nav-link ${r===id?'active':''}" href="#${id}"><span class="nav-icon">${ic}</span>${label}</a>`).join('');
+-    return `<header class="topbar"><a href="#${role==='admin'?'admin':role==='student'?'home':'coach-dashboard'}" class="brand"><img src="/assets/icon.svg" alt=""><div>NeuroPass<small>Exam preparation for minds that work differently</small></div></a><div class="top-actions"><select id="roleSwitch" class="role-pill" aria-label="Demo role">${Object.entries(roleNames).map(([k,v])=>`<option value="${k}" ${k===role?'selected':''}>Demo: ${v}</option>`).join('')}</select><button id="syncBtn" class="btn ghost small" title="Sync offline queue">${navigator.onLine?'Synced':'Offline'} ${st.offline.pendingSync?`(${st.offline.pendingSync})`:''}</button><div class="avatar">${esc((role==='student'?st.user.firstName:role==='admin'?'A':'C').slice(0,1))}</div></div></header>
++    const roleControl=st.demoMode?`<select id="roleSwitch" class="role-pill" aria-label="Demo role">${Object.entries(roleNames).map(([k,v])=>`<option value="${k}" ${k===role?'selected':''}>Demo: ${v}</option>`).join('')}</select>`:`<span class="role-pill">${esc(roleNames[role]||'Student')}</span>`;
++    return `<header class="topbar"><a href="#${role==='admin'?'admin':role==='student'?'home':'coach-dashboard'}" class="brand"><img src="/assets/icon.svg" alt=""><div>NeuroPass<small>Exam preparation for minds that work differently</small></div></a><div class="top-actions">${roleControl}<button id="syncBtn" class="btn ghost small" title="Sync offline queue">${navigator.onLine?'Synced':'Offline'} ${st.offline.pendingSync?`(${st.offline.pendingSync})`:''}</button>${!st.demoMode?'<button id="signOutBtn" class="btn ghost small">Sign out</button>':''}<div class="avatar">${esc((role==='student'?st.user.firstName:role==='admin'?'A':'C').slice(0,1))}</div></div></header>
+     <div class="layout"><aside class="sidebar"><nav class="nav-group">${navHtml}<div class="sidebar-foot"><strong>Private V1 build</strong><br>Question content is demo data until licensed source material is imported.</div></nav></aside><main class="main">${content}</main></div>
+     <nav class="mobile-bottom">${nav.slice(0,4).map(([id,ic,label])=>`<a class="${r===id?'active':''}" href="#${id}"><span class="nav-icon">${ic}</span>${label}</a>`).join('')}<button id="mobileMore"><span class="nav-icon">•••</span>More</button></nav>`;
+   }
+ 
+   function bindShell(){
+     $('#roleSwitch')?.addEventListener('change',e=>{Store.patch(s=>s.currentRole=e.target.value);const role=e.target.value;go(role==='admin'?'admin':role==='student'?'home':'coach-dashboard');render();});
+-    $('#syncBtn')?.addEventListener('click',()=>{if(!navigator.onLine)return toast('Still offline. Progress is safely queued.');Store.flushQ
