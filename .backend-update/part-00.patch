@@ -1,0 +1,69 @@
+--- a/app.js
++++ b/app.js
+@@ -30,42 +30,108 @@
+     if(s.background && s.background!=='standard') document.body.classList.add(`theme-${s.background}`);
+   }
+ 
++  async function loadAuthenticatedUser(user){
++    if(!user) return false;
++    try{
++      const {data:profile,error}=await window.NPSupabase.from('profiles').select('role,full_name').eq('id',user.id).single();
++      if(error) throw error;
++      await Store.attachRemoteUser(user.id,{preferRemote:true});
++      const roleMap={student:'student',learning_coach:'coach',senior_coach:'senior',admin:'admin'};
++      Store.patch(s=>{
++        s.authenticated=true;
++        s.demoMode=false;
++        s.user.email=user.email||s.user.email;
++        s.user.name=profile?.full_name||s.user.name;
++        s.user.firstName=(profile?.full_name||s.user.firstName||'Student').split(' ')[0];
++        s.currentRole=roleMap[profile?.role]||'student';
++      });
++      return true;
++    }catch(err){
++      console.error(err);
++      toast('Your account was found, but profile loading failed. Please try again.');
++      return false;
++    }
++  }
++
+   function authView(){
+     cleanupTransient();
+     $('#app').innerHTML=`<div class="auth-wrap">
+       <section class="auth-visual"><div class="brand"><img src="/assets/icon.svg" alt=""><div>NeuroPass<small style="color:rgba(255,255,255,.75)">Exam preparation for minds that work differently</small></div></div>
+       <div><h1>Study in a way your brain can actually use.</h1><p>JAMB and WAEC preparation with shorter learning loops, audio support, recovery days, spaced repetition and a plan that adapts to how you are doing.</p></div><small>Demo question data is illustrative. Licensed exam content can be imported by an administrator.</small></section>
+       <section class="auth-panel"><div class="auth-box"><span class="eyebrow">Student access</span><h2>Welcome to NeuroPass</h2><p>No diagnosis is required. Choose what helps you learn.</p>
+-      <form id="loginForm" class="grid" style="gap:14px"><div class="field"><label>Email</label><input required type="email" name="email" value="tolu.demo@neuropass.local"></div><div class="field"><label>Password</label><input required type="password" name="password" value="demopass"></div><button class="btn primary">Sign in</button></form>
+-      <div class="section-title"><p>or</p></div><button id="demoBtn" class="btn secondary" style="width:100%">Open interactive demo</button><button id="onboardBtn" class="btn ghost" style="width:100%;margin-top:8px">Create a student profile</button>
++      <form id="loginForm" class="grid" style="gap:14px"><div class="field"><label>Email</label><input required type="email" name="email" autocomplete="email" placeholder="you@example.com"></div><div class="field"><label>Password</label><input required type="password" name="password" autocomplete="current-password" minlength="8"></div><button class="btn primary">Sign in</button></form>
++      <div class="section-title"><p>or</p></div><button id="demoBtn" class="btn secondary" style="width:100%">Open interactive demo</button><button id="onboardBtn" class="btn ghost" style="width:100%;margin-top:8px">Create a student account</button>
+       <div class="callout info" style="margin-top:18px"><strong>Private beta build</strong><p>Guarantee language remains subject to legal approval before public launch.</p></div></div></section></div>`;
+-    $('#loginForm').onsubmit=e=>{e.preventDefault(); Store.patch(s=>{s.authenticated=true;s.user.email=new FormData(e.target).get('email');}); go('home'); render();};
+-    $('#demoBtn').onclick=()=>{Store.patch(s=>s.authenticated=true);go('home');render();};
++    $('#loginForm').onsubmit=async e=>{
++      e.preventDefault();
++      if(!window.NPSupabase) return toast('Cloud sign-in is temporarily unavailable.');
++      const fd=new FormData(e.target), email=String(fd.get('email')).trim(), password=String(fd.get('password'));
++      const btn=e.submitter; if(btn){btn.disabled=true;btn.textContent='Signing in...';}
++      const {data,error}=await window.NPSupabase.auth.signInWithPassword({email,password});
++      if(btn){btn.disabled=false;btn.textContent='Sign in';}
++      if(error) return toast(error.message);
++      if(await loadAuthenticatedUser(data.user)){go('home');render();}
++    };
++    $('#demoBtn').onclick=()=>{Store.reset();Store.patch(s=>{s.authenticated=true;s.demoMode=true;s.currentRole='student';});go('home');render();};
+     $('#onboardBtn').onclick=()=>onboarding();
+   }
+ 
+   function onboarding(){
+-    let step=0, draft={examType:'JAMB',subjects:['english','mathematics','biology','chemistry'],track:'elite',focus:false,reading:false,audio:true,examDate:'2026-11-15'};
++    let step=0, draft={name:'',email:'',password:'',examType:'JAMB',subjects:['english','mathematics','biology','chemistry'],track:'elite',focus:false,reading:false,audio:true,examDate:'2026-11-15'};
+     const renderStep=()=>{
+       const steps=[
++        `<h2>Create your account</h2><p>Your progress will sync securely across devices while downloaded study packs remain available offline.</p><div class="grid" style="gap:14px;margin-top:18px"><div class="field"><label>Full name</label><input id="signupName" autocomplete="name" value="${esc(draft.name)}" placeholder="Your full name"></div><div class="field"><label>Email</label><input id="signupEmail" type="email" autocomplete="email" value="${esc(draft.email)}" placeholder="you@example.com"></div><div class="field"><label>Password</label><input id="signupPassword" type="password" autocomplete="new-password" minlength="8" value="${esc(draft.password)}" placeholder="At least 8 characters"></div></div>`,
+         `<h2>What are you preparing for?</h2><p>Choose your exam. You can change subjects later.</p><div class="choice-grid" style="grid-template-columns:repeat(2,1fr);margin-top:18px"><button class="choice ${draft.examType==='JAMB'?'selected':''}" data-exam="JAMB">JAMB</button><button class="choice ${draft.examType==='WAEC'?'selected':''}" data-exam="WAEC">WAEC</button></div><div class="field" style="margin-top:16px"><label>Target exam date</label><input id="examDate" type="date" value="${draft.examDate}"></div>`,
+         `<h2>Select your subjects</h2><p>For this build, the demo includes the six seeded core subjects.</p><div class="grid two" style="margin-top:16px">${D.subjects.map(x=>`<label class="check-row card flat"><input type="checkbox" data-subject="${x.id}" ${draft.subjects.includes(x.id)?'checked':''}> <strong>${x.icon} ${esc(x.name)}</strong></label>`).join('')}</div>`,
+         `<h2>What usually gets in the way?</h2><p>This is not a diagnosis. It only helps NeuroPass suggest settings.</p><div class="grid" style="margin-top:16px"><label class="check-row card flat"><input id="focusBox" type="checkbox" ${draft.focus?'checked':''}><div><strong>Staying focused is difficult</strong><p>I start, drift, or abandon long study sessions.</p></div></label><label class="check-row card flat"><input id="readingBox" type="checkbox" ${draft.reading?'checked':''}><div><strong>Reading can be tiring or frustrating</strong><p>I re-read lines, lose my place, or prefer listening.</p></div></label><label class="check-row card flat"><input id="audioBox" type="checkbox" ${draft.audio?'checked':''}><div><strong>Audio helps me learn</strong><p>Suggest read-aloud support.</p></div></label></div>`,
+         `<h2>Choose a commitment track</h2><p>The advertised track is not your live guarantee. Your actual guarantee changes with completed work and spaced repetition.</p><div class="track-grid" style="margin-top:16px">${D.tracks.map(t=>`<button class="track-card ${draft.track===t.id?'selected':''}" data-track="${t.id}" style="text-align:left"><div class="track-name">${t.name}</div><div class="track-score">${t.guaranteed}/400</div><small>${t.days} days, ${t.hours} hrs/day, realistic target ${t.target}</small></button>`).join('')}</div>`,
+         `<h2>Your suggested setup</h2><p>Based on your answers, we have suggested these settings. Everything can be changed at any time in Settings. You decide what works for you.</p><div class="grid two" style="margin-top:16px"><div class="card flat"><strong>Focus support</strong><p>${draft.focus?'Visible timer, recovery missions and Low Energy Mode suggested.':'Standard focus settings suggested.'}</p></div><div class="card flat"><strong>Reading support</strong><p>${draft.reading?'Dyslexia-friendly font option, chunked passages and audio suggested.':'Standard typography with optional audio.'}</p></div></div><label class="check-row callout warning" style="margin-top:16px"><input id="contractAck" type="checkbox"><div><strong>Shared commitment</strong><p>I understand that guarantee eligibility depends on assigned sessions, mocks, schedule adherence and at least 80% average compliance. No track guarantees 400/400.</p></div></label>`
+       ];
+-      $('#app').innerHTML=`<div class="auth-wrap"><section class="auth-visual"><div class="brand"><img src="/assets/icon.svg" a
