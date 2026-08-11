@@ -1,0 +1,119 @@
+name: Fix Day 1 activation and Low Energy flow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-activation-low-energy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch activation and Low Energy behavior
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('app.js')
+          s=p.read_text()
+
+          old='''  function startSession(id){
+    const st=Store.get(), sess=st.today.sessions.find(x=>x.id===id) || st.today.sessions.find(x=>x.status!=='done');
+    if(!sess)return toast('No session is ready right now.');
+    emotionalCheckin(sess.id,()=>{studyCtx={sessionId:sess.id,lessonId:sess.lessonId||D.lessons[0].id,step:0,recallIndex:0,recallResults:[],applyIndex:0};go(`study-session`);render();});
+  }
+'''
+          new='''  function completeActivation(sess,feel){
+    const low=Store.get().today.mode==='low';
+    const feelLabel={tired:'Tired',stressed:'Stressed',okay:'Okay',good:'Good',focused:'Focused'}[feel]||'Checked in';
+    showModal(`<span class="eyebrow">Day 1 activation</span><h2>${low?'Keep today light':'Set one clear target'}</h2><p>Your calibration is complete. Day 1 Activation is a short planning and warm-up step, not a subject lesson.</p><div class="grid two" style="margin-top:16px"><div class="metric"><div class="metric-label">Current energy</div><div class="metric-value" style="font-size:1.35rem">${esc(feelLabel)}</div></div><div class="metric"><div class="metric-label">Activation length</div><div class="metric-value" style="font-size:1.35rem">${sess.duration||10} min</div></div></div>${low?'<div class="callout info" style="margin-top:16px"><strong>Low Energy Mode is on</strong><p>This activation stays short. Any longer study session you start today will be capped at 15 minutes.</p></div>':''}<div class="field" style="margin-top:16px"><label>One small goal for today</label><input id="activationGoal" autocomplete="off" placeholder="Example: understand one concord rule"></div><div class="modal-actions"><button class="btn secondary" id="cancelActivation">Not now</button><button class="btn primary" id="finishActivation">Complete activation</button></div>`,el=>{
+      $('#cancelActivation',el).onclick=closeModal;
+      $('#finishActivation',el).onclick=()=>{
+        const goal=$('#activationGoal',el).value.trim()||'Complete one short NeuroPass session.';
+        Store.patch(st=>{
+          const x=st.today.sessions.find(y=>y.id===sess.id);
+          if(x)x.status='done';
+          const next=st.today.sessions.find(y=>!['done','rest'].includes(y.status));
+          if(next)next.status='next';
+          st.today.microGoal=goal;
+          st.sessionsCompleted=(st.sessionsCompleted||0)+1;
+          st.minutesStudied=(st.minutesStudied||0)+(sess.duration||10);
+          st.user.xp=(st.user.xp||0)+15;
+        });
+        closeModal();
+        toast('Day 1 Activation complete.');
+        recalc();
+        go('home');
+        render();
+      };
+    });
+  }
+
+  function startSession(id){
+    const st=Store.get(), sess=st.today.sessions.find(x=>x.id===id) || st.today.sessions.find(x=>x.status!=='done');
+    if(!sess)return toast('No session is ready right now.');
+    emotionalCheckin(sess.id,(feel)=>{
+      if(!sess.lessonId){completeActivation(sess,feel);return;}
+      const lesson=D.lessons.find(x=>x.id===sess.lessonId)||D.lessons[0];
+      const planned=sess.duration||lesson.duration;
+      const duration=Store.get().today.mode==='low'?Math.min(15,planned):planned;
+      studyCtx={sessionId:sess.id,lessonId:lesson.id,duration,step:0,recallIndex:0,recallResults:[],applyIndex:0};
+      go(`study-session`);render();
+    });
+  }
+'''
+          if old not in s: raise SystemExit('startSession pattern missing')
+          s=s.replace(old,new)
+
+          old="$$('[data-lesson]').forEach(b=>b.onclick=()=>{studyCtx={sessionId:null,lessonId:b.dataset.lesson,step:0,recallIndex:0,recallResults:[],applyIndex:0};go('study-session');render();});"
+          new="$$('[data-lesson]').forEach(b=>b.onclick=()=>{const l=D.lessons.find(x=>x.id===b.dataset.lesson)||D.lessons[0];const duration=Store.get().today.mode==='low'?Math.min(15,l.duration):l.duration;studyCtx={sessionId:null,lessonId:l.id,duration,step:0,recallIndex:0,recallResults:[],applyIndex:0};go('study-session');render();});"
+          if old not in s: raise SystemExit('lesson binding pattern missing')
+          s=s.replace(old,new)
+
+          old="studyCtx={sessionId:null,lessonId:l.id,step:2,recallIndex:0,recallResults:[],applyIndex:0,reviewId:r.id};"
+          new="studyCtx={sessionId:null,lessonId:l.id,duration:Store.get().today.mode==='low'?Math.min(15,l.duration):l.duration,step:2,recallIndex:0,recallResults:[],applyIndex:0,reviewId:r.id};"
+          if old not in s: raise SystemExit('review binding pattern missing')
+          s=s.replace(old,new)
+
+          old='<div class="progress-row"><strong>${labels[ctx.step]}</strong><span>${lesson.duration} min loop</span></div>'
+          new='<div class="progress-row"><strong>${labels[ctx.step]}</strong><span>${ctx.duration||lesson.duration} min loop${s.today.mode===\'low\'?\' · Low Energy\':\'\'}</span></div>'
+          if old not in s: raise SystemExit('duration display pattern missing')
+          s=s.replace(old,new)
+
+          old='''  function finishStudy(lesson){
+    const now=E.isoDate(new Date());Store.patch(s=>{s.sessionsCompleted++;s.minutesStudied+=Math.max(lesson.duration,Math.ceil(sessionSeconds/60));s.user.xp+=35;if(studyCtx.sessionId){const x=s.today.sessions.find(y=>y.id===studyCtx.sessionId);if(x)x.status='done';const next=s.today.sessions.find(y=>!['done','rest'].includes(y.status));if(next)next.status='next';}if(studyCtx.reviewId){const r=s.spacedQueue.find(x=>x.id===studyCtx.reviewId);if(r)r.status='done';s.reviewsCompleted++;}s.score.updatedAt=new Date().toISOString();});cleanupTransient();studyCtx=null;showModal(`<h2>Session complete</h2><p>You finished the learning loop. Your progress has been recorded${navigator.onLine?'.':', and it will sync when you reconnect.'}</p><div class="grid two" style="margin-top:16px"><div class="metric"><div class="metric-label">XP earned</div><div class="metric-value">+35</div></div><div class="metric"><div class="metric-label">Time</div><div class="metric-value">${Math.max(lesson.duration,Math.ceil(sessionSeconds/60))}m</div></div></div><div class="modal-actions"><button class="btn primary" id="backHome">Back home</button></div>`,el=>$('#backHome',el).onclick=()=>{closeModal();go('home');render();});sessionSeconds=0;
+  }
+'''
+          new='''  function finishStudy(lesson){
+    const creditedMinutes=studyCtx?.duration||lesson.duration;
+    const now=E.isoDate(new Date());Store.patch(s=>{s.sessionsCompleted++;s.minutesStudied+=creditedMinutes;s.user.xp+=35;if(studyCtx.sessionId){const x=s.today.sessions.find(y=>y.id===studyCtx.sessionId);if(x)x.status='done';const next=s.today.sessions.find(y=>!['done','rest'].includes(y.status));if(next)next.status='next';}if(studyCtx.reviewId){const r=s.spacedQueue.find(x=>x.id===studyCtx.reviewId);if(r)r.status='done';s.reviewsCompleted++;}s.score.updatedAt=new Date().toISOString();});cleanupTransient();studyCtx=null;showModal(`<h2>Session complete</h2><p>You finished the learning loop. Your progress has been recorded${navigator.onLine?'.':', and it will sync when you reconnect.'}</p><div class="grid two" style="margin-top:16px"><div class="metric"><div class="metric-label">XP earned</div><div class="metric-value">+35</div></div><div class="metric"><div class="metric-label">Credited study time</div><div class="metric-value">${creditedMinutes}m</div></div></div><div class="modal-actions"><button class="btn primary" id="backHome">Back home</button></div>`,el=>$('#backHome',el).onclick=()=>{closeModal();go('home');render();});sessionSeconds=0;
+  }
+'''
+          if old not in s: raise SystemExit('finishStudy pattern missing')
+          s=s.replace(old,new)
+
+          # Do not present an unassigned student as already having a coach.
+          s=s.replace("${status('Assigned coach','success')}", "${s.coach.assigned?.id?status('Assigned coach','success'):status('Awaiting assignment','neutral')}")
+          s=s.replace("<form id=\"coachMessage\" class=\"action-strip\" style=\"margin-top:16px\"><input name=\"msg\" aria-label=\"Message\" placeholder=\"Write a message\" style=\"flex:1;min-width:180px;border:1px solid var(--line);border-radius:12px;padding:10px\" required><button class=\"btn primary\">Send</button></form>", "${s.coach.assigned?.id?`<form id=\"coachMessage\" class=\"action-strip\" style=\"margin-top:16px\"><input name=\"msg\" aria-label=\"Message\" placeholder=\"Write a message\" style=\"flex:1;min-width:180px;border:1px solid var(--line);border-radius:12px;padding:10px\" required><button class=\"btn primary\">Send</button></form>`:'<div class=\"callout info\" style=\"margin-top:16px\"><strong>Messaging opens after assignment</strong><p>Your message box will appear when a Learning Coach is assigned.</p></div>'}")
+
+          p.write_text(s)
+          PY
+          node --check app.js
+
+      - name: Commit activation flow fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898206+github-actions[bot]@users.noreply.github.com"
+          git add app.js
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "Fix Day 1 activation and Low Energy routing"
+          git push
