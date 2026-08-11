@@ -1,0 +1,107 @@
+name: Fix Day 1 activation flow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-activation-flow.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch activation and Low Energy routing
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('app.js')
+          s=p.read_text()
+
+          old="""  function startSession(id){
+    const st=Store.get(), sess=st.today.sessions.find(x=>x.id===id) || st.today.sessions.find(x=>x.status!=='done');
+    if(!sess)return toast('No session is ready right now.');
+    emotionalCheckin(sess.id,()=>{studyCtx={sessionId:sess.id,lessonId:sess.lessonId||D.lessons[0].id,step:0,recallIndex:0,recallResults:[],applyIndex:0};go(`study-session`);render();});
+  }
+"""
+          new="""  function completeActivation(sess,feel){
+    const low=feel==='tired' || Store.get().today.mode==='low';
+    showModal(`<span class=\"eyebrow\">Day 1 activation</span><h2>${low?'Keep today small.':'Set one small goal for today.'}</h2><p>${low?'You selected Tired, so NeuroPass will keep the activation light and shorten the next learning session.':'Choose one clear outcome for today. This is a planning warm-up, not a full lesson.'}</p><div class=\"field\" style=\"margin-top:16px\"><label>Today's small goal</label><input id=\"activationGoal\" autocomplete=\"off\" placeholder=\"Example: Finish one English lesson\"></div><div class=\"modal-actions\"><button class=\"btn primary\" id=\"finishActivation\">Complete activation</button></div>`,el=>{
+      $('#finishActivation',el).onclick=()=>{
+        const goal=$('#activationGoal',el).value.trim() || 'Complete one short study session.';
+        Store.patch(s=>{
+          s.today.microGoal=goal;
+          const x=s.today.sessions.find(y=>y.id===sess.id);
+          if(x)x.status='done';
+          const next=s.today.sessions.find(y=>!['done','rest'].includes(y.status));
+          if(next)next.status='next';
+          s.sessionsCompleted=(s.sessionsCompleted||0)+1;
+          s.minutesStudied=(s.minutesStudied||0)+sess.duration;
+          s.user.xp=(s.user.xp||0)+10;
+          if(low)s.today.mode='low';
+        });
+        closeModal();
+        toast('Day 1 activation complete. Your next session is ready.');
+        go('home');
+        render();
+      };
+    });
+  }
+
+  function startSession(id){
+    const st=Store.get(), sess=st.today.sessions.find(x=>x.id===id) || st.today.sessions.find(x=>x.status!=='done');
+    if(!sess)return toast('No session is ready right now.');
+    emotionalCheckin(sess.id,(feel)=>{
+      if(sess.id==='day1_activation'){
+        completeActivation(sess,feel);
+        return;
+      }
+      const lesson=D.lessons.find(x=>x.id===sess.lessonId) || D.lessons[0];
+      const baseDuration=sess.duration || lesson.duration;
+      const effectiveDuration=(feel==='tired' || Store.get().today.mode==='low') ? Math.min(15,baseDuration) : baseDuration;
+      studyCtx={sessionId:sess.id,lessonId:lesson.id,step:0,recallIndex:0,recallResults:[],applyIndex:0,effectiveDuration};
+      go(`study-session`);
+      render();
+    });
+  }
+"""
+          if old not in s:
+              raise SystemExit('startSession block not found')
+          s=s.replace(old,new)
+
+          old2="""<div class=\"progress-row\"><strong>${labels[ctx.step]}</strong><span>${lesson.duration} min loop</span></div>"""
+          new2="""<div class=\"progress-row\"><strong>${labels[ctx.step]}</strong><span>${ctx.effectiveDuration||lesson.duration} min loop</span></div>"""
+          if old2 not in s:
+              raise SystemExit('study duration label not found')
+          s=s.replace(old2,new2)
+
+          old3="""s.minutesStudied+=Math.max(lesson.duration,Math.ceil(sessionSeconds/60));"""
+          new3="""s.minutesStudied+=Math.max(studyCtx.effectiveDuration||lesson.duration,Math.ceil(sessionSeconds/60));"""
+          if old3 not in s:
+              raise SystemExit('finishStudy minutes calculation not found')
+          s=s.replace(old3,new3)
+
+          old4="""<div class=\"metric-value\">${Math.max(lesson.duration,Math.ceil(sessionSeconds/60))}m</div>"""
+          new4="""<div class=\"metric-value\">${Math.max(studyCtx.effectiveDuration||lesson.duration,Math.ceil(sessionSeconds/60))}m</div>"""
+          if old4 not in s:
+              raise SystemExit('finishStudy time display not found')
+          s=s.replace(old4,new4)
+
+          p.write_text(s)
+          PY
+          node --check app.js
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "Fix Day 1 activation and Low Energy session routing"
+          git push
