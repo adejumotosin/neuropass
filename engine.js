@@ -12,9 +12,12 @@ window.NPEngine = (() => {
   function getTrack(id){ return D.tracks.find(t => t.id === id) || D.tracks[0]; }
 
   function trackDay(user){
-    if (Number.isFinite(user.currentDay)) return user.currentDay;
-    if (!user.trackStart) return 1;
-    return Math.max(1, Math.floor((Date.now() - dateOnly(user.trackStart).getTime())/dayMs)+1);
+    if (user?.trackStart) {
+      const start=dateOnly(user.trackStart).getTime();
+      return Math.max(1, Math.floor((Date.now() - start)/dayMs)+1);
+    }
+    if (Number.isFinite(user?.currentDay)) return Math.max(1,user.currentDay);
+    return 1;
   }
 
   function fullCycles(daysElapsed){
@@ -133,7 +136,7 @@ window.NPEngine = (() => {
   }
 
   function avgHoursFromState(state){
-    const day = Math.max(1, state.user.currentDay || 1);
+    const day = Math.max(1, trackDay(state.user));
     return (state.minutesStudied || 0) / 60 / day;
   }
 
