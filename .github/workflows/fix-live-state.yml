@@ -1,0 +1,84 @@
+name: Fix live student state and projection
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-live-state.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch app runtime state handling
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('app.js')
+          s=p.read_text()
+          replacements=[
+            ("const s=Store.get(), track=E.getTrack(s.user.selectedTrackId), day=s.user.currentDay, daysRemain=Math.max(0,track.days-day);",
+             "const s=Store.get(), track=E.getTrack(s.user.selectedTrackId), day=E.trackDay(s.user), daysRemain=Math.max(0,track.days-day);"),
+            ("<div class=\"metric-label\">Next mock</div><div class=\"metric-value\">${E.mockPhase(day).phase}</div><div class=\"metric-sub\">${esc(E.mockPhase(day).cadence)}</div>",
+             "<div class=\"metric-label\">Mock phase</div><div class=\"metric-value\">Phase ${E.mockPhase(day).phase}</div><div class=\"metric-sub\">${esc(E.mockPhase(day).cadence)}</div>"),
+            ("<div class=\"grid two\" style=\"margin-top:18px\"><div class=\"card\"><h3>Coach support</h3><p>${s.coach.assigned.name} is your named Learning Coach. ${s.riskSignals.some(x=>x.active)?'A support signal is active.':'No urgent support signal is active.'}</p><a href=\"#coach\" class=\"btn secondary small\" style=\"margin-top:14px\">Open coach</a></div>",
+             "<div class=\"grid two\" style=\"margin-top:18px\"><div class=\"card\"><h3>Coach support</h3><p>${s.coach.assigned?.id ? `${esc(s.coach.assigned.name)} is your named Learning Coach. ${s.riskSignals.some(x=>x.active)?'A support signal is active.':'No urgent support signal is active.'}` : 'A Learning Coach has not been assigned yet.'}</p><a href=\"#coach\" class=\"btn secondary small\" style=\"margin-top:14px\">Open coach</a></div>"),
+            ("const s=Store.get(), avg=E.avgHoursFromState(s), calc=E.projectGuarantee({daysElapsed:s.user.currentDay,avgDailyHours:avg,compliance:s.compliance.rollingAverage,mockScore:s.mockHistory.at(-1)?.score,baseline:s.user.baselineScore,selectedTrackId:s.user.selectedTrackId});",
+             "const s=Store.get(), day=E.trackDay(s.user), avg=E.avgHoursFromState(s), calc=E.projectGuarantee({daysElapsed:day,avgDailyHours:avg,compliance:s.compliance.rollingAverage,mockScore:s.mockHistory.at(-1)?.score,baseline:s.user.baselineScore,selectedTrackId:s.user.selectedTrackId});"),
+            ("const s=Store.get(), phase=E.mockPhase(s.user.currentDay), last=s.mockHistory.at(-1);",
+             "const s=Store.get(), phase=E.mockPhase(E.trackDay(s.user)), last=s.mockHistory.at(-1);"),
+            ("const s=Store.get(),track=E.getTrack(s.user.selectedTrackId),daysRemain=Math.max(0,track.days-s.user.currentDay),comp=E.complianceStatus({rollingAverage:s.compliance.rollingAverage,consecutiveBelow70:s.compliance.consecutiveBelow70,daysRemaining:daysRemain});",
+             "const s=Store.get(),track=E.getTrack(s.user.selectedTrackId),day=E.trackDay(s.user),daysRemain=Math.max(0,track.days-day),comp=E.complianceStatus({rollingAverage:s.compliance.rollingAverage,consecutiveBelow70:s.compliance.consecutiveBelow70,daysRemaining:daysRemain});"),
+            ("${s.user.examType} · ${E.getTrack(s.user.selectedTrackId).name} · day ${s.user.currentDay}",
+             "${s.user.examType} · ${E.getTrack(s.user.selectedTrackId).name} · day ${E.trackDay(s.user)}")
+          ]
+          for old,new in replacements:
+              if old not in s:
+                  raise SystemExit(f'Missing expected app.js pattern: {old[:80]}')
+              s=s.replace(old,new)
+
+          old='''  function recalc(){
+            const s=Store.get(),avg=E.avgHoursFromState(s),last=s.mockHistory.at(-1);const calc=E.projectGuarantee({daysElapsed:s.user.currentDay,avgDailyHours:avg,compliance:s.compliance.rollingAverage,mockScore:last?.score,baseline:s.user.baselineScore,selectedTrackId:s.user.selectedTrackId});
+            // Preserve a realistic seeded demo when model inputs are synthetic, then update after interactions.
+            if((s.answers?.length||0)>0 || (s.mockHistory?.length||0)>4){Store.patch(x=>{x.score.guaranteed=calc.guaranteed;x.score.projected=calc.projected;x.score.modelVersion=calc.modelVersion;x.score.updatedAt=new Date().toISOString();});}
+          }
+
+          function render(){
+            cleanupTransient();applySettings();const s=Store.get();if(!s.authenticated)return authView();const r=route();if(r==='study-session'&&studyCtx){} else if(r!=='study-session')sessionSeconds=0;
+          '''
+          new='''  function recalc(){
+            const s=Store.get(),day=E.trackDay(s.user),avg=E.avgHoursFromState(s),last=s.mockHistory.at(-1);
+            const calc=E.projectGuarantee({daysElapsed:day,avgDailyHours:avg,compliance:s.compliance.rollingAverage,mockScore:last?.score,baseline:s.user.baselineScore,selectedTrackId:s.user.selectedTrackId});
+            const shouldUpdate=!s.demoMode || (s.answers?.length||0)>0 || (s.mockHistory?.length||0)>4;
+            if(shouldUpdate && (s.user.currentDay!==day || s.score.guaranteed!==calc.guaranteed || s.score.projected!==calc.projected || s.score.modelVersion!==calc.modelVersion)){
+              Store.patch(x=>{x.user.currentDay=day;x.score.guaranteed=calc.guaranteed;x.score.projected=calc.projected;x.score.modelVersion=calc.modelVersion;x.score.updatedAt=new Date().toISOString();});
+            }
+          }
+
+          function render(){
+            cleanupTransient();recalc();applySettings();const s=Store.get();if(!s.authenticated)return authView();const r=route();if(r==='study-session'&&studyCtx){} else if(r!=='study-session')sessionSeconds=0;
+          '''
+          if old not in s:
+              raise SystemExit('Missing expected recalc/render block')
+          s=s.replace(old,new)
+          p.write_text(s)
+          PY
+          node --check app.js
+
+      - name: Commit runtime hotfix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "Fix fresh student dashboard state and live projection"
+          git push
