@@ -25,7 +25,7 @@ NeuroPass is a mobile-first JAMB and WAEC preparation PWA designed specifically 
 
 ## Important content limitation
 
-The product scope says V1 should eventually contain the full JAMB 2000–2024 question bank and WAEC past questions, but that licensed content was not supplied to this build. The included 15 questions are illustrative demo questions, not official past questions. The admin import screen is designed for authorized CSV/JSON content and requires a rights confirmation.
+The product scope says V1 should eventually contain the full JAMB 2000–2024 question bank and WAEC past questions, but that licensed content was not supplied to this build. The included 15 questions are **illustrative demo questions**, not official past questions. The admin import screen is designed for authorized CSV/JSON content and requires a rights confirmation.
 
 ## Important launch blockers
 

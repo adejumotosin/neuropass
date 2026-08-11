@@ -1,0 +1,13 @@
+[
+  {
+    "exam_type": "JAMB",
+    "year": "Demo",
+    "subject": "Mathematics",
+    "topic": "Indices & Logarithms",
+    "stem": "If log10(1000) = x, what is x?",
+    "options": ["1", "2", "3", "10"],
+    "correct_answer": 2,
+    "explanation": "10 x 10 x 10 = 1000, so the exponent is 3.",
+    "source_license": "Illustrative demo question, not official past-question content."
+  }
+]

@@ -1,0 +1,12 @@
+{
+  "name": "NeuroPass",
+  "short_name": "NeuroPass",
+  "description": "Exam preparation for minds that work differently.",
+  "start_url": "/#home",
+  "display": "standalone",
+  "background_color": "#f4f8fb",
+  "theme_color": "#1261a0",
+  "icons": [
+    {"src": "/assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
+}
