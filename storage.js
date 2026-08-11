@@ -58,6 +58,15 @@ window.NPStore = (() => {
     return true;
   }
 
+  function isDemoOrForeignState(local,userId){
+    if(!local) return true;
+    if(local.demoMode) return true;
+    if(local?.user?.id === 'student_demo') return true;
+    if(local?.user?.authUserId && local.user.authUserId !== userId) return true;
+    if(!local?.user?.authUserId && local.onboardingComplete) return true;
+    return false;
+  }
+
   async function attachRemoteUser(userId,{preferRemote=true}={}){
     remoteUserId=userId;
     if(!window.NPSupabase) return get();
@@ -66,12 +75,15 @@ window.NPStore = (() => {
     if(preferRemote && data?.state && Object.keys(data.state).length){
       applyingRemote=true;
       state={...window.NeuroPassData.makeFreshState(),...data.state,authenticated:true,demoMode:false};
+      state.user=state.user||{};
+      state.user.authUserId=userId;
+      state.user.id=userId;
       localStorage.setItem(KEY,JSON.stringify(state));
       applyingRemote=false;
       listeners.forEach(fn=>fn(state));
     } else {
       const local=get();
-      if(local?.user?.authUserId && local.user.authUserId !== userId){
+      if(isDemoOrForeignState(local,userId)){
         state=window.NeuroPassData.makeFreshState();
       }
       state.user=state.user||{};
