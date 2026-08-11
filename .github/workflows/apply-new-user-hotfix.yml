@@ -1,0 +1,38 @@
+name: Apply NeuroPass new user hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.hotfix/new-user.patch'
+      - '.github/workflows/apply-new-user-hotfix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate and apply hotfix
+        run: |
+          git apply --check .hotfix/new-user.patch
+          git apply .hotfix/new-user.patch
+          node --check app.js
+          node --check data.js
+          node --check storage.js
+
+      - name: Commit hotfix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js data.js storage.js
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "Fix new user initialization and auth redirects"
+          git push
